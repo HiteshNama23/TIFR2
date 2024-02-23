@@ -1,0 +1,32 @@
+{
+  "name": "namakaproject",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aadeesh11/Nama-ka-project.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Aadeesh11/Nama-ka-project/issues"
+  },
+  "homepage": "https://github.com/Aadeesh11/Nama-ka-project#readme",
+  "dependencies": {
+    "@theinternetfolks/snowflake": "^1.3.0",
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "joi": "^17.12.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.3",
+    "pg-hstore": "^2.3.4",
+    "postgres": "^3.4.2",
+    "sequelize": "^6.37.1"
+  }
+}
