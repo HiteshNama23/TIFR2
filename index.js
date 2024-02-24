@@ -53,9 +53,6 @@ const Community = sequelize.define("Community", {
   },
 });
 
-Community.belongsTo(User, { foreignKey: "owner" });
-User.hasMany(Community);
-
 const Role = sequelize.define("role", {
   id: {
     type: DataTypes.STRING,
@@ -75,9 +72,10 @@ const Member = sequelize.define("member", {
   },
 });
 
-Member.hasOne(User, { foreignKey: "user" });
-Member.hasOne(Community, { foreignKey: "community" });
-Member.hasOne(Role, { foreignKey: "role" });
+Community.belongsTo(User, { foreignKey: "owner_id", as: "owner" });
+Member.belongsTo(User, { foreignKey: "user_id", as: "user" });
+Member.belongsTo(Community, { foreignKey: "community_id", as: "community" });
+Member.belongsTo(Role, { foreignKey: "role_id", as: "role" });
 
 function getsuccessStruct(data) {
   return {
@@ -131,6 +129,143 @@ async function authenticateToken(req, res, next) {
     next();
   });
 }
+
+app.delete("/v1/member/:id", authenticateToken, async (req, res) => {
+  const user = await req.decoded;
+  const victim_id = req.params.id;
+  const victim = await Member.findOne({ where: { id: victim_id } });
+  if (!victim) {
+    res.json(
+      getErrorStruct([
+        {
+          message: "Member not found.",
+          code: "RESOURCE_NOT_FOUND",
+        },
+      ]),
+    );
+    return;
+  }
+  const myMember = await Member.findOne({
+    where: { community_id: victim.community_id, user_id: user.id },
+  });
+  if (!myMember) {
+    res.json(
+      getErrorStruct([
+        {
+          message: "You are not authorized to perform this action.",
+          code: "NOT_ALLOWED_ACCESS",
+        },
+      ]),
+    );
+    return;
+  }
+  const myRole = await Role.findOne({ where: { id: myMember.role_id } });
+  if (!myRole) {
+    res.json(
+      getErrorStruct([
+        {
+          message: "You are not authorized to perform this action.",
+          code: "NOT_ALLOWED_ACCESS",
+        },
+      ]),
+    );
+    return;
+  }
+  if (
+    myRole.name !== "Community Admin" ||
+    myRole.name !== "Community Moderator"
+  ) {
+    res.json(
+      getErrorStruct([
+        {
+          message: "You are not authorized to perform this action.",
+          code: "NOT_ALLOWED_ACCESS",
+        },
+      ]),
+    );
+    return;
+  }
+  await Member.destroy({ where: { id: victim_id } });
+  res.status(200).json({ status: true });
+});
+
+app.post("/v1/member", authenticateToken, async (req, res) => {
+  const user = await req.decoded;
+  const community_id = req.body.community;
+  const new_user_id = req.body.user;
+  const role_id = req.body.role;
+  const community = await Community.findOne({ where: { id: community_id } });
+  if (!community) {
+    res.json(
+      getErrorStruct([
+        {
+          param: "community",
+          message: "Community not found.",
+          code: "RESOURCE_NOT_FOUND",
+        },
+      ]),
+    );
+    return;
+  }
+  if (community.owner_id !== user.id) {
+    res.json(
+      getErrorStruct([
+        {
+          message: "You are not authorized to perform this action.",
+          code: "NOT_ALLOWED_ACCESS",
+        },
+      ]),
+    );
+    return;
+  }
+  const new_user = await User.findOne({ where: { id: new_user_id } });
+  if (!new_user) {
+    res.json(
+      getErrorStruct([
+        {
+          param: "user",
+          message: "User not found.",
+          code: "RESOURCE_NOT_FOUND",
+        },
+      ]),
+    );
+    return;
+  }
+  const role = await Role.findOne({ where: { id: role_id } });
+  if (!role) {
+    res.json(
+      getErrorStruct([
+        {
+          param: "role",
+          message: "Role not found.",
+          code: "RESOURCE_NOT_FOUND",
+        },
+      ]),
+    );
+    return;
+  }
+  const exists = await Member.findOne({
+    where: { user_id: new_user_id, community_id },
+  });
+  if (exists) {
+    res.json(
+      getErrorStruct([
+        {
+          message: "User is already added in the community",
+          code: "RESOURCE_EXISTS",
+        },
+      ]),
+    );
+    return;
+  }
+  const new_member = await Member.create({
+    id: Snowflake.generate(),
+    community_id,
+    user_id: new_user_id,
+    role_id,
+  });
+  res.json(getsuccessStruct({ data: new_member }));
+});
 
 app.post("/v1/role", (req, res) => {
   const { name } = req.body;
@@ -193,6 +328,7 @@ app.get("/v1/role", (req, res) => {
 
 app.post("/v1/community", authenticateToken, async (req, res) => {
   const user = await req.decoded;
+  console.log(user);
   const { name } = req.body;
   if (name === undefined || name.length <= 2) {
     res.json(
@@ -205,20 +341,20 @@ app.post("/v1/community", authenticateToken, async (req, res) => {
   } else {
     const user_id = user.id;
     console.log(user_id, "User ID");
-    Community.create({
+    const community = await Community.create({
       id: Snowflake.generate(),
       name,
       slug: name.toLowerCase(),
-      owner: user_id,
-    }).then((community) => {
-      Member.create({
-        id: Snowflake.generate(),
-        user: user_id,
-        community: community.id,
-        role: Role.findOne({ where: { name: "Community Admin" } }).id,
-      });
-      res.json(getsuccessStruct({ data: community }));
+      owner_id: user_id,
     });
+    const admin = await Role.findOne({ where: { name: "Community Admin" } });
+    Member.create({
+      id: Snowflake.generate(),
+      user_id: user_id,
+      community_id: community.id,
+      role_id: admin.id,
+    });
+    res.json(getsuccessStruct({ data: community }));
   }
 });
 
@@ -235,11 +371,11 @@ app.get("/v1/community", async (req, res) => {
     include: [
       {
         model: User,
-        // required: true,
+        as: "owner",
         attributes: ["id", "name"],
-        // as: "owner",
       },
     ],
+    attributes: { exclude: ["owner_id"] },
   }).then((communities) => {
     res.json(
       getsuccessStruct({
@@ -262,7 +398,8 @@ app.get("/v1/community/:id/members", (req, res) => {
   Member.findAndCountAll({
     limit: 10,
     offset: page * 10,
-    where: { community: req.params.id },
+    where: { community_id: req.params.id },
+    attributes: ["id", ["community_id", "community"], "createdAt"],
     include: [
       {
         model: User,
@@ -291,13 +428,14 @@ app.get("/v1/community/:id/members", (req, res) => {
   });
 });
 
-app.get("/v1/community/me/owner", (req, res) => {
+app.get("/v1/community/me/owner", authenticateToken, async (req, res) => {
+  const user = await req.decoded;
   let { page } = req.query;
   if (page === undefined || page < 0) {
     page = 0;
   }
   Community.findAndCountAll({
-    where: { owner: req.decoded.id },
+    where: { owner_id: user.id },
   }).then((communities) => {
     res.json(
       getsuccessStruct({
@@ -312,22 +450,29 @@ app.get("/v1/community/me/owner", (req, res) => {
   });
 });
 
-app.get("/v1/community/me/member", (req, res) => {
+app.get("/v1/community/me/member", authenticateToken, async (req, res) => {
+  const user = await req.decoded;
   let { page } = req.query;
   if (page === undefined || page < 0) {
     page = 0;
   }
-  Community.findAndCountAll({
-    where: {},
+  Member.findAndCountAll({
+    where: { user_id: user.id },
     include: [
       {
-        model: Member,
+        model: Community,
         required: true,
-        attributes: [],
-        where: { user: req.decoded.id },
-        as: "member",
+        attributes: { exclude: ["owner_id"] },
+        as: "community",
+        include: [
+          {
+            model: User,
+            required: true,
+            attributes: ["id", "name"],
+            as: "owner",
+          },
+        ],
       },
-      { model: User, required: true, attributes: ["id", "name"], as: "owner" },
     ],
   }).then((members) => {
     res.json(
@@ -337,7 +482,7 @@ app.get("/v1/community/me/member", (req, res) => {
           total: members.count,
           pages: parseInt(members.count / 10) + 1,
         },
-        data: members.rows,
+        data: members.rows.map((member) => member["community"]),
       }),
     );
   });
